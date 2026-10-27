@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Comparativo entre Fuentes</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@2.1.0/dist/chartjs-plugin-annotation.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
+    {% load static %}
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f4f6f9; color: #333; padding: 20px; }
+        h1 { font-size: 1.6rem; margin-bottom: 5px; color: #1e3a8a; }
+        .subtitle { font-size: 0.85rem; color: #6b7280; margin-bottom: 15px; }
+        .filters { background: #fff; padding: 15px 20px; border-radius: 10px; margin-bottom: 20px; display: flex; gap: 15px; flex-wrap: wrap; align-items: flex-end; box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+        .filters > div { display: flex; flex-direction: column; gap: 4px; }
+        .filters label { font-size: 0.8rem; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: 0.5px; }
+        .filters select, .filters input { padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 0.9rem; min-width: 160px; background: #fff; }
+        .filters select:focus, .filters input:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15); }
+        .filters button { padding: 9px 18px; background: #2563eb; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; transition: background 0.2s; }
+        .filters button:hover { background: #1e40af; }
+        .fuente-a label { color: #2563eb; }
+        .fuente-b label { color: #dc2626; }
+
+        .grid-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .chart-card { background: #fff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); height: 400px; position: relative; display: flex; flex-direction: column; }
+        .chart-card.tall { height: 500px; }
+        .chart-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #e5e7eb; padding-bottom: 8px; margin-bottom: 10px; }
+        .chart-header h3 { font-size: 1rem; color: #1e3a8a; margin: 0; }
+        .btn-expand { background: #f3f4f6; border: 1px solid #d1d5db; color: #4b5563; border-radius: 4px; padding: 2px 8px; cursor: pointer; font-size: 0.75rem; }
+        .btn-expand:hover { background: #e5e7eb; color: #1f2937; }
+        .canvas-container { flex-grow: 1; position: relative; width: 100%; height: 100%; min-height: 0; }
+
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.7); z-index: 1000; justify-content: center; align-items: center; padding: 20px; }
+        .modal-overlay.active { display: flex; }
+        .modal-content { background: #fff; padding: 20px; border-radius: 10px; width: 95vw; height: 90vh; display: flex; flex-direction: column; box-shadow: 0 10px 25px rgba(0,0,0,0.3); }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px; }
+        .modal-header h3 { font-size: 1.2rem; color: #1e3a8a; }
+        .btn-close { background: #dc2626; color: #fff; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .modal-canvas-container { flex-grow: 1; position: relative; width: 100%; height: 100%; }
+
+        .nav-link { display: inline-block; margin-bottom: 10px; color: #2563eb; text-decoration: none; font-size: 0.85rem; }
+        .nav-link:hover { text-decoration: underline; }
+
+        @media (max-width: 900px) {
+            .grid-charts { grid-template-columns: 1fr; }
+            .chart-card { height: 350px; }
+            .chart-card.tall { height: 400px; }
+        }
+    </style>
+</head>
+<body>
+
+    <a href="{% url 'dashboard' %}" class="nav-link">← Volver al dashboard original</a>
+    <h1>Dashboard Comparativo entre Fuentes</h1>
+    <p class="subtitle">Comparación de indicadores demográficos entre dos fuentes de datos</p>
+
+    <div class="filters">
+        <div class="fuente-a">
+            <label for="filterFuenteA">Fuente A</label>
+            <select id="filterFuenteA" onchange="cargarDatos()">
+                {% for f in todas_fuentes %}
+                    <option value="{{ f }}" {% if f == fuente_default %}selected{% endif %}>{{ f }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="fuente-b">
+            <label for="filterFuenteB">Fuente B</label>
+            <select id="filterFuenteB" onchange="cargarDatos()">
+                <option value="">— Sin comparación —</option>
+                {% for f in todas_fuentes %}
+                    <option value="{{ f }}">{{ f }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label for="filterEntidad">Entidad</label>
+            <select id="filterEntidad" onchange="actualizarMunicipios()">
+                <option value="">Valle de México</option>
+                {% for e in entidades %}
+                    <option value="{{ e.clave_ent }}">{{ e.nom_ent }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label for="filterMunicipio">Municipio</label>
+            <select id="filterMunicipio" onchange="cargarDatos()">
+                <option value="">Todos</option>
+            </select>
+        </div>
+        <div>
+            <label for="filterQuinquenal">Grupo de Edad (Razón)</label>
+            <select id="filterQuinquenal" onchange="cargarDatos()">
+                <option value="total">Toda la población</option>
+                <option value="00_04">00-04 años</option>
+                <option value="05_09">05-09 años</option>
+                <option value="10_14">10-14 años</option>
+                <option value="15_19">15-19 años</option>
+                <option value="20_24">20-24 años</option>
+                <option value="25_29">25-29 años</option>
+                <option value="30_34">30-34 años</option>
+                <option value="35_39">35-39 años</option>
+                <option value="40_44">40-44 años</option>
+                <option value="45_49">45-49 años</option>
+                <option value="50_54">50-54 años</option>
+                <option value="55_59">55-59 años</option>
+                <option value="60_64">60-64 años</option>
+                <option value="65_69">65-69 años</option>
+                <option value="70_74">70-74 años</option>
+                <option value="75_79">75-79 años</option>
+                <option value="80_84">80-84 años</option>
+                <option value="85_mm">85+ años</option>
+            </select>
+        </div>
+        <div>
+            <label for="filterInicio">Año Inicio</label>
+            <input type="number" id="filterInicio" value="1990" min="1990" max="2040" onchange="cargarDatos()">
+        </div>
+        <div>
+            <label for="filterFin">Año Fin</label>
+            <input type="number" id="filterFin" value="2040" min="1990" max="2040" onchange="cargarDatos()">
+        </div>
+        <div>
+            <label for="filterPiramide">Años Pirámide</label>
+            <input type="text" id="filterPiramide" value="2025,2040" placeholder="Ej: 1990,2025,2040" onchange="cargarDatos()">
+        </div>
+        
+        <div>
+            <button onclick="cargarDatos()">🔄 Actualizar</button>
+        </div>
+    </div>
+
+    <div class="grid-charts">
+        <div class="chart-card">
+            <div class="chart-header">
+                <h3 id="titlePoblacion">Población Total por Año</h3>
+                <button class="btn-expand" onclick="abrirModal('chartPoblacion', 'titlePoblacion')">⛶ Expandir</button>
+            </div>
+            <div class="canvas-container"><canvas id="chartPoblacion"></canvas></div>
+        </div>
+
+        <div class="chart-card">
+            <div class="chart-header">
+                <h3 id="titleRazon">Razón por sexo</h3>
+                <button class="btn-expand" onclick="abrirModal('chartRazon', 'titleRazon')">⛶ Expandir</button>
+            </div>
+            <div class="canvas-container"><canvas id="chartRazon"></canvas></div>
+        </div>
+
+        <div class="chart-card tall">
+            <div class="chart-header">
+                <h3 id="titleTotales">Evolución de la Población Total</h3>
+                <button class="btn-expand" onclick="abrirModal('chartTotales', 'titleTotales')">⛶ Expandir</button>
+            </div>
+            <div class="canvas-container"><canvas id="chartTotales"></canvas></div>
+        </div>
+
+        <div class="chart-card tall">
+            <div class="chart-header">
+                <h3 id="titlePiramide">Comparativa de Pirámides Poblacionales</h3>
+                <button class="btn-expand" onclick="abrirModal('chartPiramide', 'titlePiramide')">⛶ Expandir</button>
+            </div>
+            <div class="canvas-container"><canvas id="chartPiramide"></canvas></div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="chartModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modalTitle">Título</h3>
+                <button class="btn-close" onclick="cerrarModal()">✖ Cerrar</button>
+            </div>
+            <div class="modal-canvas-container">
+                <canvas id="modalCanvas"></canvas>
+            </div>
+        </div>
+    </div>
+
+<script>
+    const municipiosPorEntidad = {{ municipios_json|safe }};
+
+    const COLORES_FUENTES = {
+        'A': { hom: '#2563eb', muj: '#dc2626', razon: '#7c3aed', pir_h: 'rgba(37,99,235,0.8)', pir_m: 'rgba(220,38,38,0.8)' },
+        'B': { hom: '#059669', muj: '#d97706', razon: '#0891b2', pir_h: 'rgba(5,150,105,0.8)', pir_m: 'rgba(217,119,6,0.8)' },
+    };
+
+    let graficaPoblacion, graficaRazon, graficaTotales, graficaPiramide;
+    let graficaModal = null;
+    let configuracionesGraficas = {};
+
+    function limpiarEtiquetaEdad(str) {
+        return str.replace(/^75(mm|_mm)$/i, '75-79').replace(/^80(mm|_mm)$/i, '80-84').replace(/^85(mm|_mm)$/i, '85+').replace(/(mm|_mm)$/i, '+').replace('_', '-');
+    }
+
+    window.actualizarMunicipios = function() {
+        const entidad = document.getElementById('filterEntidad').value;
+        const selectMun = document.getElementById('filterMunicipio');
+        selectMun.innerHTML = '<option value="">Todos</option>';
+        if (entidad && municipiosPorEntidad[entidad]) {
+            municipiosPorEntidad[entidad].forEach(mun => {
+                const opt = document.createElement('option');
+                opt.value = mun;
+                opt.textContent = mun;
+                selectMun.appendChild(opt);
+            });
+        }
+        window.cargarDatos();
+    };
+
+    window.cargarDatos = async function() {
+        const entidadSelect = document.getElementById('filterEntidad');
+        const municipioSelect = document.getElementById('filterMunicipio');
+        const quinquenalSelect = document.getElementById('filterQuinquenal');
+
+        const fuenteA = document.getElementById('filterFuenteA').value;
+        const fuenteB = document.getElementById('filterFuenteB').value;
+        const entidad = entidadSelect.value;
+        const entidadNombre = entidadSelect.options[entidadSelect.selectedIndex].text;
+        const municipio = municipioSelect.value;
+        const municipioNombre = municipio ? municipioSelect.options[municipioSelect.selectedIndex].text : 'Todos';
+        const grupoQuinquenal = quinquenalSelect.value;
+        const grupoQuinquenalNombre = quinquenalSelect.options[quinquenalSelect.selectedIndex].text;
+        const inicio = document.getElementById('filterInicio').value;
+        const fin = document.getElementById('filterFin').value;
+        const piramideAnios = document.getElementById('filterPiramide').value;
+        
+        // Forzamos a true si hay municipio, y a false si es "Todos"
+        const mostrarLiLs = (municipio !== '');
+
+        if (parseInt(inicio) > parseInt(fin)) {
+            alert('El año de inicio no puede ser mayor que el año fin.');
+            return;
+        }
+
+        const textoUbicacion = `${entidadNombre} ${municipio !== '' ? '- ' + municipioNombre : ''}`;
+        const tituloEdad = grupoQuinquenal !== 'total' ? ` - ${grupoQuinquenalNombre}` : '';
+
+        document.getElementById('titlePoblacion').innerText = `Población Total (${textoUbicacion})`;
+        document.getElementById('titleRazon').innerText = `Razón por sexo (${textoUbicacion}${tituloEdad})`;
+        document.getElementById('titleTotales').innerText = `Evolución de la Población Total (${textoUbicacion})`;
+        document.getElementById('titlePiramide').innerText = `Pirámide Poblacional (${textoUbicacion})`;
+
+        const params = new URLSearchParams({
+            fuente_a: fuenteA, fuente_b: fuenteB,
+            entidad, municipio,
+            año_inicio: inicio, año_fin: fin,
+            años_piramide: piramideAnios,
+            grupo_quinquenal: grupoQuinquenal,
+            mostrar_li_ls: mostrarLiLs
+        });
+        const url = `/api/dashboard-comparativo/?${params.toString()}`;
+
+        try {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const data = await response.json();
+            window.actualizarGraficas(data, piramideAnios, mostrarLiLs);
+        } catch (error) {
+            console.error('Error cargando datos:', error);
+            alert('No se pudieron cargar los datos.');
+        }
+    };
+
+    const imgHombre = new Image();
+    imgHombre.crossOrigin = "Anonymous";
+    imgHombre.src = "{% static 'img/hombre.png' %}";
+    const imgMujer = new Image();
+    imgMujer.crossOrigin = "Anonymous";
+    imgMujer.src = "{% static 'img/mujer.png' %}";
+    imgHombre.onload = () => { if (graficaPiramide) graficaPiramide.draw(); if (graficaModal) graficaModal.draw(); };
+    imgMujer.onload = () => { if (graficaPiramide) graficaPiramide.draw(); if (graficaModal) graficaModal.draw(); };
+
+    const iconosPiramidePlugin = {
+        id: 'iconosPiramide',
+        afterDraw: (chart) => {
+            const { ctx, chartArea: { top, left, width } } = chart;
+            if (!width || width < 450) return;
+            const xLeft = left + (width * 0.20);
+            const xRight = left + (width * 0.80);
+            const yPos = top - 28;
+            const size = 28;
+            ctx.save();
+            if (imgHombre.complete && imgHombre.naturalWidth > 0) ctx.drawImage(imgHombre, xLeft - (size/2), yPos, size, size);
+            if (imgMujer.complete && imgMujer.naturalWidth > 0) ctx.drawImage(imgMujer, xRight - (size/2), yPos, size, size);
+            ctx.restore();
+        }
+    };
+
+    const fondoRazonPlugin = {
+        id: 'fondoRazon',
+        beforeDatasetsDraw: (chart) => {
+            const { ctx, chartArea, scales } = chart;
+            if (!chartArea || !scales || !scales.y) return;
+            const yScale = scales.y;
+            if (100 < yScale.min || 100 > yScale.max) return;
+            const yCien = yScale.getPixelForValue(100);
+            if (!isFinite(yCien) || yCien < chartArea.top || yCien > chartArea.bottom) return;
+            const height = chartArea.bottom - yCien;
+            if (height <= 0) return;
+            ctx.save();
+            ctx.fillStyle = 'rgba(124, 58, 237, 0.10)';
+            ctx.fillRect(chartArea.left, yCien, chartArea.right - chartArea.left, height);
+            ctx.restore();
+        }
+    };
+
+    const PALETA_PIR = [
+        { h: 'rgba(54,162,235,0.8)',  m: 'rgba(255,99,132,0.8)' },
+        { h: 'rgba(75,192,192,0.8)',  m: 'rgba(255,206,86,0.8)' },
+        { h: 'rgba(153,102,255,0.8)', m: 'rgba(255,159,64,0.8)' },
+    ];
+
+    window.actualizarGraficas = function(data, piramideAniosStr, mostrarLiLs) {
+        const A = data.a;
+        const B = data.b;
+        const tieneB = !!(B && B.anios && B.anios.length && data.fuente_b !== data.fuente_a);
+
+        const añosSet = new Set([...(A?.anios || []), ...(tieneB ? B?.anios : [])]);
+        const aniosUnidos = Array.from(añosSet).sort((x, y) => x - y);
+        const minX = aniosUnidos.length ? aniosUnidos[0] : 1990;
+        const ultimoAnio = aniosUnidos.length ? aniosUnidos[aniosUnidos.length - 1] : 2040;
+
+        const todosValores = [
+            ...(A?.hom_total || []), ...(A?.muj_total || []),
+            ...(tieneB ? B.hom_total : []), ...(tieneB ? B.muj_total : []),
+        ];
+        const maxPoblacion = Math.max(...todosValores, 1);
+        const usarMillones = maxPoblacion >= 1000000;
+        const divisor = usarMillones ? 1000000 : 1000;
+        const etiquetaEscala = usarMillones ? 'M' : 'k';
+        const tituloEscala = usarMillones ? 'Millones de personas' : 'Miles de personas';
+
+        const añoProyeccion = 2020;
+
+        function alinear(aniosFuente, valores) {
+            if (!aniosFuente || !valores) return aniosUnidos.map(() => null);
+            return aniosUnidos.map(a => {
+                const i = aniosFuente.indexOf(a);
+                if (i === -1) return null;
+                const val = valores[i];
+                if (val === null || val === undefined || isNaN(val)) return null;
+                return Number(val) / divisor;
+            });
+        }
+
+        function alinear_razon(aniosFuente, valores) {
+            if (!aniosFuente || !valores) return aniosUnidos.map(() => null);
+            return aniosUnidos.map(a => {
+                const i = aniosFuente.indexOf(a);
+                if (i === -1) return null;
+                const val = valores[i];
+                if (val === null || val === undefined || isNaN(val)) return null;
+                return Number(val);
+            });
+        }
+
+        const razonesValidas = [
+            ...(A?.razon_hombres || []), ...(tieneB ? B.razon_hombres : []), 100
+        ].filter(v => v !== null && !isNaN(v) && isFinite(v));
+        const minRazon = Math.min(...razonesValidas);
+        const maxRazon = Math.max(...razonesValidas);
+        const margenRazon = Math.max((maxRazon - minRazon) * 0.2, 2);
+        const yMinRazon = Math.floor(minRazon - margenRazon);
+        const yMaxRazon = Math.ceil(maxRazon + margenRazon);
+
+        const getBackgroundPlugin = () => ({
+            id: 'customCanvasBackgroundColor',
+            beforeDraw: (chart) => {
+                const { ctx, chartArea, scales } = chart;
+                if (!chartArea || !scales || !scales.x) return;
+                if (minX > añoProyeccion || ultimoAnio < añoProyeccion) return;
+                const añoInicioSombra = Math.max(añoProyeccion, minX);
+                const xStart = scales.x.getPixelForValue(añoInicioSombra);
+                const xEnd = scales.x.getPixelForValue(ultimoAnio);
+                if (isFinite(xStart) && isFinite(xEnd) && xEnd > xStart) {
+                    ctx.save();
+                    ctx.fillStyle = 'rgba(245, 158, 11, 0.10)';
+                    ctx.fillRect(xStart, chartArea.top, xEnd - xStart, chartArea.bottom - chartArea.top);
+                    ctx.restore();
+                }
+            }
+        });
+
+        // --- 1. POBLACIÓN ---
+        if (graficaPoblacion) graficaPoblacion.destroy();
+        const dsPoblacion = [];
+        if (A) {
+            dsPoblacion.push({ label: `${data.fuente_a} - Hombres`, data: alinear(A.anios, A.hom_total), borderColor: COLORES_FUENTES.A.hom, backgroundColor: COLORES_FUENTES.A.hom, tension: 0, fill: false, pointRadius: 3, borderDash: [] });
+            dsPoblacion.push({ label: `${data.fuente_a} - Mujeres`, data: alinear(A.anios, A.muj_total), borderColor: COLORES_FUENTES.A.muj, backgroundColor: COLORES_FUENTES.A.muj, tension: 0, fill: false, pointRadius: 3, borderDash: [] });
+        }
+        if (tieneB) {
+            dsPoblacion.push({ label: `${data.fuente_b} - Hombres`, data: alinear(B.anios, B.hom_total), borderColor: COLORES_FUENTES.B.hom, backgroundColor: COLORES_FUENTES.B.hom, tension: 0, fill: false, pointRadius: 3, borderDash: [6, 4] });
+            dsPoblacion.push({ label: `${data.fuente_b} - Mujeres`, data: alinear(B.anios, B.muj_total), borderColor: COLORES_FUENTES.B.muj, backgroundColor: COLORES_FUENTES.B.muj, tension: 0, fill: false, pointRadius: 3, borderDash: [6, 4] });
+        }
+
+        configuracionesGraficas['chartPoblacion'] = {
+            type: 'line',
+            data: { labels: aniosUnidos, datasets: dsPoblacion },
+            plugins: [getBackgroundPlugin()],
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                layout: { padding: { top: 25 } },
+                interaction: { mode: 'index', intersect: false },
+                spanGaps: true,
+                elements: { point: { radius: 3, hoverRadius: 5 } },
+                plugins: {
+                    legend: { position: 'top' },
+                    tooltip: { callbacks: { label: ctx => ctx.raw == null ? `${ctx.dataset.label}: sin datos` : `${ctx.dataset.label}: ${ctx.raw.toFixed(2)} ${etiquetaEscala}` } },
+                    datalabels: {
+                        display: true, align: 'top', anchor: 'end', offset: 3,
+                        backgroundColor: 'rgba(255, 255, 255, 0.8)', borderRadius: 3, padding: { top: 1, bottom: 1, left: 3, right: 3 },
+                        color: function(ctx) { return ctx.dataset.borderColor; },
+                        font: { size: 8, weight: 'bold' },
+                        formatter: function(value) { return value.toFixed(1) + ' M'; }
+                    },
+                    annotation: {
+                        annotations: {
+                            lineaVerticalProyeccion: {
+                                type: 'line', scaleID: 'x', value: añoProyeccion,
+                                borderColor: 'rgba(217, 119, 6, 0.8)', borderWidth: 2, borderDash: [6, 6],
+                                display: () => ultimoAnio >= añoProyeccion && minX <= añoProyeccion
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: { beginAtZero: false, ticks: { callback: v => v.toFixed(1) + ' ' + etiquetaEscala }, title: { display: true, text: tituloEscala } }
+                },
+            },
+        };
+        graficaPoblacion = new Chart(document.getElementById('chartPoblacion'), configuracionesGraficas['chartPoblacion']);
+
+        // --- 2. RAZÓN ---
+        if (graficaRazon) graficaRazon.destroy();
+        const dsRazon = [];
+        if (A) {
+            dsRazon.push({ label: `${data.fuente_a} - Hombres por 100 mujeres`, data: alinear_razon(A.anios, A.razon_hombres), borderColor: COLORES_FUENTES.A.razon, backgroundColor: COLORES_FUENTES.A.razon, fill: false, tension: 0, pointRadius: 3, borderDash: [] });
+        }
+        if (tieneB) {
+            dsRazon.push({ label: `${data.fuente_b} - Hombres por 100 mujeres`, data: alinear_razon(B.anios, B.razon_hombres), borderColor: COLORES_FUENTES.B.razon, backgroundColor: COLORES_FUENTES.B.razon, fill: false, tension: 0, pointRadius: 3, borderDash: [6, 4] });
+        }
+
+        configuracionesGraficas['chartRazon'] = {
+            type: 'line',
+            data: { labels: aniosUnidos, datasets: dsRazon },
+            plugins: [getBackgroundPlugin(), fondoRazonPlugin],
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                layout: { padding: { top: 25 } },
+                interaction: { mode: 'index', intersect: false },
+                spanGaps: true,
+                elements: { point: { radius: 3, hoverRadius: 5 } },
+                plugins: {
+                    legend: { position: 'top' },
+                    tooltip: { callbacks: { label: ctx => ctx.raw == null ? `${ctx.dataset.label}: sin datos` : `${ctx.dataset.label}: ${ctx.raw.toFixed(2)} hombres / 100 mujeres` } },
+                    datalabels: {
+                        display: true, align: 'top', anchor: 'end', offset: 3,
+                        backgroundColor: 'rgba(255, 255, 255, 0.8)', borderRadius: 3, padding: { top: 1, bottom: 1, left: 3, right: 3 },
+                        color: function(ctx) { return ctx.dataset.borderColor; },
+                        font: { size: 8, weight: 'bold' },
+                        formatter: function(value) { return value.toFixed(1); }
+                    },
+                    annotation: {
+                        annotations: {
+                            lineaBase100: {
+                                type: 'line', yMin: 100, yMax: 100,
+                                borderColor: 'rgba(107, 114, 128, 0.8)', borderWidth: 2, borderDash: [6, 6],
+                                label: { display: true, content: 'Base 100', position: 'end', backgroundColor: 'rgba(107, 114, 128, 0.8)', font: { size: 10 } }
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: { beginAtZero: false, min: yMinRazon, max: yMaxRazon, ticks: { callback: v => v.toFixed(1) }, title: { display: true, text: 'Hombres por 100 mujeres' } }
+                },
+            },
+        };
+        graficaRazon = new Chart(document.getElementById('chartRazon'), configuracionesGraficas['chartRazon']);
+
+        // --- 3. EVOLUCIÓN POBLACIÓN TOTAL (A + B + Bandas) ---
+        if (graficaTotales) graficaTotales.destroy();
+        const dsTotales = [];
+
+        function alinearPob(aniosFuente, valores) {
+            if (!aniosFuente || !valores) return aniosUnidos.map(() => null);
+            return aniosUnidos.map(a => {
+                const i = aniosFuente.indexOf(a);
+                if (i === -1) return null;
+                const val = valores[i];
+                if (val === null || val === undefined || isNaN(val)) return null;
+                return Number(val) / divisor;
+            });
+        }
+
+        if (A) {
+            dsTotales.push({
+                label: `${data.fuente_a} - Población Total`,
+                data: alinearPob(A.anios, A.pob_total),
+                borderColor: '#1e3a8a', backgroundColor: 'rgba(30, 58, 138, 0.10)',
+                fill: true, tension: 0, pointRadius: 4, borderDash: []
+            });
+        }
+
+        if (tieneB) {
+            dsTotales.push({
+                label: `${data.fuente_b} - Población Total`,
+                data: alinearPob(B.anios, B.pob_total),
+                borderColor: '#b45309', backgroundColor: 'rgba(180, 83, 9, 0.10)',
+                fill: true, tension: 0, pointRadius: 4, borderDash: [6, 4]
+            });
+            
+            // LÍMITES INEGI: Solo se dibujan si el parámetro mostrarLiLs es verdadero
+            if (mostrarLiLs && data.li_ls_ultimo_anio) {
+                const info = data.li_ls_ultimo_anio;
+                
+                dsTotales.push({
+                    type: 'scatter',
+                    label: `Límite Superior (${info.anio})`,
+                    data: [{ x: info.anio, y: info.ls / divisor }],
+                    borderColor: 'rgba(239, 68, 68, 1)',
+                    backgroundColor: 'rgba(239, 68, 68, 1)',
+                    pointRadius: 6,
+                    pointHoverRadius: 8,
+                    showLine: false
+                });
+                
+                dsTotales.push({
+                    type: 'scatter',
+                    label: `Límite Inferior (${info.anio})`,
+                    data: [{ x: info.anio, y: info.li / divisor }],
+                    borderColor: 'rgba(239, 68, 68, 1)',
+                    backgroundColor: 'rgba(239, 68, 68, 1)',
+                    pointRadius: 6,
+                    pointHoverRadius: 8,
+                    showLine: false
+                });
+            }
+        }
+
+        configuracionesGraficas['chartTotales'] = {
+            type: 'line',
+            data: { labels: aniosUnidos, datasets: dsTotales },
+            plugins: [getBackgroundPlugin()],
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                layout: { padding: { top: 35 } },
+                interaction: { mode: 'index', intersect: false },
+                spanGaps: true,
+                elements: { point: { radius: 4, hoverRadius: 6 } },
+                grouped: false,
+                plugins: {
+                    legend: { 
+                        position: 'top', 
+                        labels: { 
+                            boxWidth: 14, font: { size: 10 },
+                            filter: function(item) {
+                                return !item.text.includes('Límite Inferior') && !item.text.includes('Límite Superior');
+                            }
+                        } 
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(ctx) {
+                                if (ctx.raw == null) return null;
+                                if (ctx.dataset.label.includes('Límite')) return null;
+                                
+                                const valorReal = Number(ctx.raw.y !== undefined ? ctx.raw.y : ctx.raw) * divisor;
+                                return `${ctx.dataset.label}: ${Math.round(valorReal).toLocaleString('es-MX')} hab.`;
+                            },
+                            footer: function(tooltipItems) {
+                                const anioTooltip = tooltipItems[0].label;
+                                // El footer de límites también debe estar condicionado a mostrarLiLs
+                                if (mostrarLiLs && data.li_ls_ultimo_anio && String(data.li_ls_ultimo_anio.anio) === String(anioTooltip)) {
+                                    const info = data.li_ls_ultimo_anio;
+                                    return `Límites INEGI:\n[${Math.round(info.li).toLocaleString('es-MX')} - ${Math.round(info.ls).toLocaleString('es-MX')}] hab.`;
+                                }
+                                return null;
+                            }
+                        }
+                    },
+                    datalabels: {
+                        display: function(ctx) {
+                            return !ctx.dataset.label.includes('Límite') && (ctx.datasetIndex === 0 || (tieneB && ctx.dataset.label.includes(data.fuente_b) && ctx.dataset.label.includes('Total'))) && ctx.raw != null;
+                        },
+                        align: 'top', anchor: 'end', offset: 3,
+                        backgroundColor: 'rgba(255, 255, 255, 0.85)', borderRadius: 4, padding: { top: 2, bottom: 2, left: 4, right: 4 },
+                        color: function(ctx) { return ctx.dataset.label.includes(data.fuente_a) ? '#1e3a8a' : '#b45309'; },
+                        font: { size: 10, weight: 'bold' },
+                        formatter: function(value) { 
+                            const val = value.y !== undefined ? value.y : value;
+                            return val.toFixed(2) + ' M'; 
+                        }
+                    },
+                    annotation: {
+                        annotations: {
+                            lineaVerticalProyeccion: {
+                                type: 'line', scaleID: 'x', value: añoProyeccion,
+                                borderColor: 'rgba(217, 119, 6, 0.8)', borderWidth: 2, borderDash: [6, 6],
+                                display: () => ultimoAnio >= añoProyeccion && minX <= añoProyeccion
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        type: 'category',
+                        labels: aniosUnidos
+                    },
+                    y: { 
+                        beginAtZero: false, 
+                        ticks: { callback: v => v.toFixed(1) + ' ' + etiquetaEscala }, 
+                        title: { display: true, text: tituloEscala } 
+                    }
+                },
+            },
+        };
+        graficaTotales = new Chart(document.getElementById('chartTotales'), configuracionesGraficas['chartTotales']);
+
+        // --- 4. PIRÁMIDE ---
+        if (graficaPiramide) graficaPiramide.destroy();
+        const rangosInvertidos = [...((A && A.rangos_edad) || (B && B.rangos_edad) || [])].reverse().map(limpiarEtiquetaEdad);
+        const listaAnios = piramideAniosStr.split(',').map(a => a.trim()).filter(a => a !== '');
+        const datasetsPiramide = [];
+        let idxColor = 0;
+
+        const fuentesIter = [];
+        if (A) fuentesIter.push({ key: 'A', label: data.fuente_a, obj: A });
+        if (tieneB) fuentesIter.push({ key: 'B', label: data.fuente_b, obj: B });
+
+        fuentesIter.forEach(fuente => {
+            listaAnios.forEach(anio => {
+                if (!fuente.obj.piramides || !fuente.obj.piramides[anio]) return;
+                const color = PALETA_PIR[idxColor % PALETA_PIR.length];
+
+                const homRaw = [...fuente.obj.piramides[anio].hombres].reverse();
+                const mujRaw = [...fuente.obj.piramides[anio].mujeres].reverse();
+
+                const totalH = homRaw.reduce((a, b) => a + b, 0);
+                const totalM = mujRaw.reduce((a, b) => a + b, 0);
+
+                const homPct = homRaw.map(v => totalH > 0 ? -(v / totalH) * 100 : 0);
+                const mujPct = mujRaw.map(v => totalM > 0 ? (v / totalM) * 100 : 0);
+
+                datasetsPiramide.push({
+                    label: `${fuente.label} ${anio} - Hombres`, data: homPct, backgroundColor: color.h, borderColor: color.h, borderWidth: 1, barPercentage: 0.85, rawAbsolutos: homRaw,
+                });
+                datasetsPiramide.push({
+                    label: `${fuente.label} ${anio} - Mujeres`, data: mujPct, backgroundColor: color.m, borderColor: color.m, borderWidth: 1, barPercentage: 0.85, rawAbsolutos: mujRaw,
+                });
+                idxColor++;
+            });
+        });
+
+        configuracionesGraficas['chartPiramide'] = {
+            type: 'bar',
+            plugins: [iconosPiramidePlugin],
+            data: { labels: rangosInvertidos, datasets: datasetsPiramide },
+            options: {
+                indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+                events: ['click'], // Solo se activa el tooltip al hacer clic
+                interaction: { mode: 'index', intersect: true }, // intersect: true para que solo se active sobre la barra exacta
+                grouped: false,
+                plugins: {
+                    legend: { position: 'top', labels: { boxWidth: 14, font: { size: 10 } } },
+                    tooltip: {
+                        callbacks: {
+                            label: function(ctx) {
+                                const absoluto = ctx.dataset.rawAbsolutos[ctx.dataIndex];
+                                return `${ctx.dataset.label}: ${absoluto} (${Math.abs(ctx.raw).toFixed(1)}%)`;
+                            }
+                        }
+                    },
+                    datalabels: { display: false }
+                },
+                scales: {
+                    x: { stacked: false, suggestedMin: -10, suggestedMax: 10, ticks: { callback: v => Math.abs(v).toFixed(0) + '%', font: { size: 10 } }, title: { display: true, text: 'Porcentaje del total', font: { size: 10 } } },
+                    y: { stacked: false, ticks: { font: { size: 10 } }, title: { display: true, text: 'Rango de edad', font: { size: 10 } } }
+                },
+            },
+        };
+        graficaPiramide = new Chart(document.getElementById('chartPiramide'), configuracionesGraficas['chartPiramide']);
+    };
+
+    window.abrirModal = function(canvasId, tituloId) {
+        const modal = document.getElementById('chartModal');
+        const modalCanvas = document.getElementById('modalCanvas');
+
+        document.getElementById('modalTitle').innerText = document.getElementById(tituloId).innerText;
+        modal.classList.add('active');
+
+        if (graficaModal) graficaModal.destroy();
+
+        const configActual = configuracionesGraficas[canvasId];
+
+        if (configActual) {
+            const datasetsClonados = configActual.data.datasets.map(ds => ({
+                ...ds,
+                type: ds.type || configActual.type,
+                data: Array.isArray(ds.data) ? ds.data.map(v => (v && typeof v === 'object') ? { ...v } : v) : ds.data
+            }));
+
+            graficaModal = new Chart(modalCanvas, {
+                type: configActual.type,
+                data: {
+                    labels: [...configActual.data.labels],
+                    datasets: datasetsClonados
+                },
+                plugins: configActual.plugins || [],
+                options: {
+                    ...configActual.options,
+                    responsive: true,
+                    maintainAspectRatio: false,
+                }
+            });
+        }
+    };
+
+    window.cerrarModal = function() {
+        const modal = document.getElementById('chartModal');
+        modal.classList.remove('active');
+        if (graficaModal) {
+            graficaModal.destroy();
+            graficaModal = null;
+        }
+    };
+
+    document.getElementById('chartModal').addEventListener('click', function(e) {
+        if (e.target === this) window.cerrarModal();
+    });
+
+    window.addEventListener('DOMContentLoaded', window.cargarDatos);
+</script>
+</body>
+</html>

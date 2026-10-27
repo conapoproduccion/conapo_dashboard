@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Demográfico Interactivo</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@2.1.0/dist/chartjs-plugin-annotation.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
+    {% load static %}
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f4f6f9; color: #333; padding: 20px; }
+        h1 { font-size: 1.6rem; margin-bottom: 15px; color: #1e3a8a; }
+        .filters { background: #fff; padding: 15px 20px; border-radius: 10px; margin-bottom: 20px; display: flex; gap: 15px; flex-wrap: wrap; align-items: flex-end; box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+        .filters > div { display: flex; flex-direction: column; gap: 4px; }
+        .filters label { font-size: 0.8rem; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: 0.5px; }
+        .filters select, .filters input { padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 0.9rem; min-width: 160px; background: #fff; }
+        .filters select:focus, .filters input:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15); }
+        .filters button { padding: 9px 18px; background: #2563eb; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; transition: background 0.2s; }
+        .filters button:hover { background: #1e40af; }
+
+        .grid-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .chart-card { background: #fff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); height: 400px; position: relative; display: flex; flex-direction: column; }
+        .chart-card.tall { height: 500px; }
+        .chart-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #e5e7eb; padding-bottom: 8px; margin-bottom: 10px; }
+        .chart-header h3 { font-size: 1rem; color: #1e3a8a; margin: 0; border: none; padding: 0; }
+        .btn-expand { background: #f3f4f6; border: 1px solid #d1d5db; color: #4b5563; border-radius: 4px; padding: 2px 8px; cursor: pointer; font-size: 0.75rem; transition: all 0.2s; }
+        .btn-expand:hover { background: #e5e7eb; color: #1f2937; }
+
+        .canvas-container { flex-grow: 1; position: relative; width: 100%; height: 100%; min-height: 0; }
+
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.7); z-index: 1000; justify-content: center; align-items: center; padding: 20px; }
+        .modal-overlay.active { display: flex; }
+        .modal-content { background: #fff; padding: 20px; border-radius: 10px; width: 95vw; height: 90vh; display: flex; flex-direction: column; position: relative; box-shadow: 0 10px 25px rgba(0,0,0,0.3); }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px; }
+        .modal-header h3 { font-size: 1.2rem; color: #1e3a8a; margin: 0; }
+        .btn-close { background: #dc2626; color: #fff; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .btn-close:hover { background: #b91c1c; }
+        .modal-canvas-container { flex-grow: 1; position: relative; width: 100%; height: 100%; }
+
+        @media (max-width: 900px) {
+            .grid-charts { grid-template-columns: 1fr; }
+            .chart-card { height: 350px; }
+            .chart-card.tall { height: 400px; }
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Dashboard Demográfico Interactivo</h1>
+
+    <a href="{% url 'dashboard_comparativo' %}" style="display:inline-block;margin-bottom:10px;color:#2563eb;font-size:0.85rem;text-decoration:none;">
+        → Ir al dashboard comparativo entre fuentes
+    </a>
+
+    <div class="filters">
+        <div>
+            <label for="filterFuente">Fuente de Datos</label>
+            <select id="filterFuente" onchange="cargarDatos()">
+                {% for f in todas_fuentes %}
+                    <option value="{{ f }}" {% if f == fuente_default %}selected{% endif %}>{{ f }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div>
+            <label for="filterEntidad">Entidad</label>
+            <select id="filterEntidad" onchange="actualizarMunicipios()">
+                <option value="">Valle de México</option>
+                {% for e in entidades %}
+                    <option value="{{ e.clave_ent }}">{{ e.nom_ent }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label for="filterMunicipio">Municipio</label>
+            <select id="filterMunicipio" onchange="cargarDatos()">
+                <option value="">Todos</option>
+            </select>
+        </div>
+
+        <div>
+            <label for="filterQuinquenal">Grupo de Edad (Razón)</label>
+            <select id="filterQuinquenal" onchange="cargarDatos()">
+                <option value="total">Toda la población</option>
+                <option value="00_04">00-04 años</option>
+                <option value="05_09">05-09 años</option>
+                <option value="10_14">10-14 años</option>
+                <option value="15_19">15-19 años</option>
+                <option value="20_24">20-24 años</option>
+                <option value="25_29">25-29 años</option>
+                <option value="30_34">30-34 años</option>
+                <option value="35_39">35-39 años</option>
+                <option value="40_44">40-44 años</option>
+                <option value="45_49">45-49 años</option>
+                <option value="50_54">50-54 años</option>
+                <option value="55_59">55-59 años</option>
+                <option value="60_64">60-64 años</option>
+                <option value="65_69">65-69 años</option>
+                <option value="70_74">70-74 años</option>
+                <option value="75_79">75-79 años</option>
+                <option value="80_84">80-84 años</option>
+                <option value="85_mm">85+ años</option>
+            </select>
+        </div>
+
+        <div>
+            <label for="filterInicio">Año Inicio</label>
+            <input type="number" id="filterInicio" value="1990" min="1990" max="2040" onchange="cargarDatos()">
+        </div>
+        <div>
+            <label for="filterFin">Año Fin</label>
+            <input type="number" id="filterFin" value="2040" min="1990" max="2040" onchange="cargarDatos()">
+        </div>
+        <div>
+            <label for="filterPiramide">Años Pirámide</label>
+            <input type="text" id="filterPiramide" value="2025,2040" placeholder="Ej: 1990,2025,2040" onchange="cargarDatos()">
+        </div>
+        <div>
+            <button onclick="cargarDatos()">🔄 Actualizar</button>
+        </div>
+    </div>
+
+    <div class="grid-charts">
+        <div class="chart-card">
+            <div class="chart-header">
+                <h3 id="titlePoblacion">Población Total por Año</h3>
+                <button class="btn-expand" onclick="abrirModal('chartPoblacion', 'titlePoblacion')">⛶ Expandir</button>
+            </div>
+            <div class="canvas-container"><canvas id="chartPoblacion"></canvas></div>
+        </div>
+
+        <div class="chart-card">
+            <div class="chart-header">
+                <h3 id="titleRazon">Razón por sexo</h3>
+                <button class="btn-expand" onclick="abrirModal('chartRazon', 'titleRazon')">⛶ Expandir</button>
+            </div>
+            <div class="canvas-container"><canvas id="chartRazon"></canvas></div>
+        </div>
+
+        <div class="chart-card tall">
+            <div class="chart-header">
+                <h3 id="titleTotales">Evolución de la Población Total</h3>
+                <button class="btn-expand" onclick="abrirModal('chartTotales', 'titleTotales')">⛶ Expandir</button>
+            </div>
+            <div class="canvas-container"><canvas id="chartTotales"></canvas></div>
+        </div>
+
+        <div class="chart-card tall">
+            <div class="chart-header">
+                <h3 id="titlePiramide">Pirámide Poblacional</h3>
+                <button class="btn-expand" onclick="abrirModal('chartPiramide', 'titlePiramide')">⛶ Expandir</button>
+            </div>
+            <div class="canvas-container"><canvas id="chartPiramide"></canvas></div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="chartModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modalTitle">Título</h3>
+                <button class="btn-close" onclick="cerrarModal()">✖ Cerrar</button>
+            </div>
+            <div class="modal-canvas-container">
+                <canvas id="modalCanvas"></canvas>
+            </div>
+        </div>
+    </div>
+
+<script>
+    const municipiosPorEntidad = {{ municipios_json|safe }};
+    const coloresPir = [
+        { h: 'rgba(54, 162, 235, 0.8)',  m: 'rgba(255, 99, 132, 0.8)' },
+        { h: 'rgba(75, 192, 192, 0.8)',  m: 'rgba(255, 206, 86, 0.8)' },
+        { h: 'rgba(153, 102, 255, 0.8)', m: 'rgba(255, 159, 64, 0.8)' },
+    ];
+
+    let graficaPoblacion, graficaRazon, graficaTotales, graficaPiramide;
+    let graficaModal = null;
+    let configuracionesGraficas = {};
+
+    function limpiarEtiquetaEdad(str) {
+        return str.replace(/^75(mm|_mm)$/i, '75-79').replace(/^80(mm|_mm)$/i, '80-84').replace(/^85(mm|_mm)$/i, '85+').replace(/(mm|_mm)$/i, '+').replace('_', '-');
+    }
+
+    window.actualizarMunicipios = function() {
+        const entidad = document.getElementById('filterEntidad').value;
+        const selectMun = document.getElementById('filterMunicipio');
+        selectMun.innerHTML = '<option value="">Todos</option>';
+        if (entidad && municipiosPorEntidad[entidad]) {
+            municipiosPorEntidad[entidad].forEach(mun => {
+                const opt = document.createElement('option');
+                opt.value = mun;
+                opt.textContent = mun;
+                selectMun.appendChild(opt);
+            });
+        }
+        window.cargarDatos();
+    };
+
+    window.cargarDatos = async function() {
+        const entidadSelect = document.getElementById('filterEntidad');
+        const municipioSelect = document.getElementById('filterMunicipio');
+        const quinquenalSelect = document.getElementById('filterQuinquenal');
+
+        const fuente = document.getElementById('filterFuente').value;
+        const entidad = entidadSelect.value;
+        const entidadNombre = entidadSelect.options[entidadSelect.selectedIndex].text;
+        const municipio = municipioSelect.value;
+        const municipioNombre = municipio ? municipioSelect.options[municipioSelect.selectedIndex].text : 'Todos';
+
+        const grupoQuinquenal = quinquenalSelect.value;
+        const grupoQuinquenalNombre = quinquenalSelect.options[quinquenalSelect.selectedIndex].text;
+
+        const inicio = document.getElementById('filterInicio').value;
+        const fin = document.getElementById('filterFin').value;
+        const piramideAnios = document.getElementById('filterPiramide').value;
+
+        if (parseInt(inicio) > parseInt(fin)) {
+            alert('El año de inicio no puede ser mayor que el año fin.');
+            return;
+        }
+
+        const textoUbicacion = `${entidadNombre} ${municipio !== '' ? '- ' + municipioNombre : ''}`;
+        let tituloEdad = grupoQuinquenal !== 'total' ? ` - ${grupoQuinquenalNombre}` : '';
+
+        document.getElementById('titlePoblacion').innerText = `Población Total (${textoUbicacion})`;
+        document.getElementById('titleRazon').innerText = `Razón por sexo (${textoUbicacion}${tituloEdad})`;
+        document.getElementById('titleTotales').innerText = `Evolución de la Población Total (${textoUbicacion})`;
+        document.getElementById('titlePiramide').innerText = `Pirámide Poblacional (${textoUbicacion})`;
+
+        const params = new URLSearchParams({
+            fuente, entidad, municipio,
+            año_inicio: inicio, año_fin: fin,
+            años_piramide: piramideAnios, grupo_quinquenal: grupoQuinquenal
+        });
+        const url = `/api/dashboard-data/?${params.toString()}`;
+
+        try {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const data = await response.json();
+            window.actualizarGraficas(data, piramideAnios);
+        } catch (error) {
+            console.error('Error cargando datos:', error);
+            alert('No se pudieron cargar los datos.');
+        }
+    };
+
+    const imgHombre = new Image();
+    imgHombre.crossOrigin = "Anonymous";
+    imgHombre.src = "{% static 'img/hombre.png' %}";
+    const imgMujer = new Image();
+    imgMujer.crossOrigin = "Anonymous";
+    imgMujer.src = "{% static 'img/mujer.png' %}";
+
+    imgHombre.onload = () => { if (graficaPiramide) graficaPiramide.draw(); if (graficaModal) graficaModal.draw(); };
+    imgMujer.onload = () => { if (graficaPiramide) graficaPiramide.draw(); if (graficaModal) graficaModal.draw(); };
+
+    const iconosPiramidePlugin = {
+        id: 'iconosPiramide',
+        afterDraw: (chart) => {
+            const { ctx, chartArea: { top, left, width } } = chart;
+            if (!width || width < 450) return;
+            const xLeft = left + (width * 0.20);
+            const xRight = left + (width * 0.80);
+            const yPos = top - 28;
+            const size = 28;
+            ctx.save();
+            if (imgHombre.complete && imgHombre.naturalWidth > 0) ctx.drawImage(imgHombre, xLeft - (size / 2), yPos, size, size);
+            if (imgMujer.complete && imgMujer.naturalWidth > 0) ctx.drawImage(imgMujer, xRight - (size / 2), yPos, size, size);
+            ctx.restore();
+        }
+    };
+
+    const fondoRazonPlugin = {
+        id: 'fondoRazon',
+        beforeDatasetsDraw: (chart) => {
+            const { ctx, chartArea, scales } = chart;
+            if (!chartArea || !scales || !scales.y) return;
+            const yScale = scales.y;
+            if (100 < yScale.min || 100 > yScale.max) return;
+            const yCien = yScale.getPixelForValue(100);
+            if (!isFinite(yCien) || yCien < chartArea.top || yCien > chartArea.bottom) return;
+            const height = chartArea.bottom - yCien;
+            if (height <= 0) return;
+            ctx.save();
+            ctx.fillStyle = 'rgba(124, 58, 237, 0.10)';
+            ctx.fillRect(chartArea.left, yCien, chartArea.right - chartArea.left, height);
+            ctx.restore();
+        }
+    };
+
+    window.actualizarGraficas = function(data, piramideAniosStr) {
+        const ultimoAnio = data.anios.length > 0 ? data.anios[data.anios.length - 1] : 2040;
+        const minX = data.anios.length > 0 ? data.anios[0] : 1990;
+
+        const maxPoblacion = Math.max(...data.hom_total, ...data.muj_total);
+        const usarMillones = maxPoblacion >= 1_000_000;
+        const divisor = usarMillones ? 1_000_000 : 1_000;
+        const etiquetaEscala = usarMillones ? 'M' : 'k';
+        const tituloEscala = usarMillones ? 'Millones de personas' : 'Miles de personas';
+
+        const añoProyeccion = 2020;
+
+        let minRazon = Math.min(...data.razon_hombres, 100);
+        let maxRazon = Math.max(...data.razon_hombres, 100);
+        const margenRazon = Math.max((maxRazon - minRazon) * 0.2, 2);
+        const yMinRazon = Math.floor(minRazon - margenRazon);
+        const yMaxRazon = Math.ceil(maxRazon + margenRazon);
+
+        const getBackgroundPlugin = () => ({
+            id: 'customCanvasBackgroundColor',
+            beforeDraw: (chart) => {
+                const { ctx, chartArea, scales } = chart;
+                if (!chartArea || !scales || !scales.x) return;
+                if (minX > añoProyeccion || ultimoAnio < añoProyeccion) return;
+                const añoInicioSombra = Math.max(añoProyeccion, minX);
+                const xStart = scales.x.getPixelForValue(añoInicioSombra);
+                const xEnd = scales.x.getPixelForValue(ultimoAnio);
+                if (isFinite(xStart) && isFinite(xEnd) && xEnd > xStart) {
+                    ctx.save();
+                    ctx.fillStyle = 'rgba(245, 158, 11, 0.10)';
+                    ctx.fillRect(xStart, chartArea.top, xEnd - xStart, chartArea.bottom - chartArea.top);
+                    ctx.restore();
+                }
+            }
+        });
+
+        // --- 1. POBLACIÓN (H / M) ---
+        if (graficaPoblacion) graficaPoblacion.destroy();
+        configuracionesGraficas['chartPoblacion'] = {
+            type: 'line',
+            data: {
+                labels: data.anios,
+                datasets: [
+                    { label: `Hombres (${etiquetaEscala})`, data: data.hom_total.map(v => v / divisor), borderColor: '#2563eb', tension: 0, fill: false, pointRadius: 3, pointBackgroundColor: '#2563eb' },
+                    { label: `Mujeres (${etiquetaEscala})`, data: data.muj_total.map(v => v / divisor), borderColor: '#dc2626', tension: 0, fill: false, pointRadius: 3, pointBackgroundColor: '#dc2626' },
+                ],
+            },
+            plugins: [getBackgroundPlugin()],
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                layout: { padding: { top: 25 } },
+                interaction: { mode: 'index', intersect: false },
+                elements: { point: { radius: 3, hoverRadius: 5 } },
+                plugins: {
+                    legend: { position: 'top' },
+                    tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.raw.toFixed(2)} ${etiquetaEscala}` } },
+                    datalabels: {
+                        display: true, align: 'top', anchor: 'end', offset: 4,
+                        backgroundColor: 'rgba(255, 255, 255, 0.8)', borderRadius: 3, padding: { top: 1, bottom: 1, left: 3, right: 3 },
+                        color: function(ctx) { return ctx.dataset.borderColor; },
+                        font: { size: 9, weight: 'bold' },
+                        formatter: function(value) { return value.toFixed(1) + ' M'; }
+                    },
+                    annotation: {
+                        annotations: {
+                            lineaVerticalProyeccion: {
+                                type: 'line', scaleID: 'x', value: añoProyeccion,
+                                borderColor: 'rgba(217, 119, 6, 0.8)', borderWidth: 2, borderDash: [6, 6],
+                                display: () => ultimoAnio >= añoProyeccion && minX <= añoProyeccion
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: { beginAtZero: false, ticks: { callback: v => v.toFixed(1) + ' ' + etiquetaEscala }, title: { display: true, text: tituloEscala } }
+                },
+            },
+        };
+        graficaPoblacion = new Chart(document.getElementById('chartPoblacion'), configuracionesGraficas['chartPoblacion']);
+
+        // --- 2. RAZÓN ---
+        if (graficaRazon) graficaRazon.destroy();
+        configuracionesGraficas['chartRazon'] = {
+            type: 'line',
+            data: {
+                labels: data.anios,
+                datasets: [{ label: 'Hombres por cada 100 mujeres', data: data.razon_hombres, borderColor: '#7c3aed', fill: false, tension: 0, pointRadius: 3, pointBackgroundColor: '#7c3aed' }],
+            },
+            plugins: [getBackgroundPlugin(), fondoRazonPlugin],
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                layout: { padding: { top: 25 } },
+                interaction: { mode: 'index', intersect: false },
+                elements: { point: { radius: 3, hoverRadius: 5 } },
+                plugins: {
+                    legend: { position: 'top' },
+                    tooltip: { callbacks: { label: ctx => `${ctx.raw} hombres / 100 mujeres` } },
+                    datalabels: {
+                        display: true, align: 'top', anchor: 'end', offset: 4,
+                        backgroundColor: 'rgba(255, 255, 255, 0.8)', borderRadius: 3, padding: { top: 1, bottom: 1, left: 3, right: 3 },
+                        color: '#7c3aed',
+                        font: { size: 9, weight: 'bold' },
+                        formatter: function(value) { return value.toFixed(1); }
+                    },
+                    annotation: {
+                        annotations: {
+                            lineaBase100: {
+                                type: 'line', yMin: 100, yMax: 100,
+                                borderColor: 'rgba(107, 114, 128, 0.8)', borderWidth: 2, borderDash: [6, 6],
+                                label: { display: true, content: 'Base 100', position: 'end', backgroundColor: 'rgba(107, 114, 128, 0.8)', font: { size: 10 } }
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: { beginAtZero: false, min: yMinRazon, max: yMaxRazon, ticks: { callback: v => v }, title: { display: true, text: 'Hombres por 100 mujeres' } }
+                },
+            },
+        };
+        graficaRazon = new Chart(document.getElementById('chartRazon'), configuracionesGraficas['chartRazon']);
+
+        // --- 3. EVOLUCIÓN DE LA POBLACIÓN TOTAL ---
+        if (graficaTotales) graficaTotales.destroy();
+
+        const pobTotalDiv = data.pob_total.map(v => v / divisor);
+        
+        const dsTotales = [
+            {
+                label: `Población Total (${etiquetaEscala})`,
+                data: pobTotalDiv,
+                borderColor: '#1e3a8a',
+                backgroundColor: 'rgba(30, 58, 138, 0.08)',
+                fill: true, tension: 0, pointRadius: 4, pointBackgroundColor: '#1e3a8a',
+            },
+        ];
+
+        configuracionesGraficas['chartTotales'] = {
+            type: 'line',
+            data: { labels: data.anios, datasets: dsTotales },
+            plugins: [getBackgroundPlugin()],
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                layout: { padding: { top: 35 } },
+                interaction: { mode: 'index', intersect: false },
+                spanGaps: false,
+                elements: { point: { radius: 4, hoverRadius: 6 } },
+                plugins: {
+                    legend: { position: 'top', labels: { boxWidth: 14, font: { size: 11 } } },
+                    tooltip: {
+                        callbacks: {
+                            label: function(ctx) {
+                                if (ctx.raw == null) return `${ctx.dataset.label}: sin datos`;
+                                const valorReal = Number(ctx.raw) * divisor;
+                                return `${ctx.dataset.label}: ${Math.round(valorReal).toLocaleString('es-MX')} hab.`;
+                            }
+                        }
+                    },
+                    datalabels: {
+                        display: function(ctx) {
+                            return ctx.datasetIndex === 0 && ctx.raw != null;
+                        },
+                        align: 'top', anchor: 'end', offset: 4,
+                        backgroundColor: 'rgba(255, 255, 255, 0.85)',
+                        borderRadius: 4, padding: { top: 2, bottom: 2, left: 4, right: 4 },
+                        color: '#1e3a8a',
+                        font: { size: 10, weight: 'bold' },
+                        formatter: function(value) { return value.toFixed(2) + ' M'; }
+                    },
+                    annotation: {
+                        annotations: {
+                            lineaVerticalProyeccion: {
+                                type: 'line', scaleID: 'x', value: añoProyeccion,
+                                borderColor: 'rgba(217, 119, 6, 0.8)', borderWidth: 2, borderDash: [6, 6],
+                                display: () => ultimoAnio >= añoProyeccion && minX <= añoProyeccion
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: { beginAtZero: false, ticks: { callback: v => v.toFixed(1) + ' ' + etiquetaEscala }, title: { display: true, text: tituloEscala } }
+                },
+            },
+        };
+        graficaTotales = new Chart(document.getElementById('chartTotales'), configuracionesGraficas['chartTotales']);
+
+        // --- 4. PIRÁMIDE ---
+        if (graficaPiramide) graficaPiramide.destroy();
+        const datasetsPiramide = [];
+        const listaAnios = piramideAniosStr.split(',').map(a => a.trim()).filter(a => a !== '');
+        const rangosInvertidos = [...data.rangos_edad].reverse().map(limpiarEtiquetaEdad);
+
+        listaAnios.forEach((anio, index) => {
+            if (!data.piramides[anio]) return;
+            const color = coloresPir[index % coloresPir.length];
+
+            const homRaw = [...data.piramides[anio].hombres].reverse();
+            const mujRaw = [...data.piramides[anio].mujeres].reverse();
+
+            const totalH = homRaw.reduce((a, b) => a + b, 0);
+            const totalM = mujRaw.reduce((a, b) => a + b, 0);
+
+            const homPct = homRaw.map(v => totalH > 0 ? -(v / totalH) * 100 : 0);
+            const mujPct = mujRaw.map(v => totalM > 0 ? (v / totalM) * 100 : 0);
+
+            datasetsPiramide.push({
+                label: `${anio} - Hombres`, data: homPct, backgroundColor: color.h, borderColor: color.h,
+                borderWidth: 1, barPercentage: 0.85, rawAbsolutos: homRaw,
+            });
+            datasetsPiramide.push({
+                label: `${anio} - Mujeres`, data: mujPct, backgroundColor: color.m, borderColor: color.m,
+                borderWidth: 1, barPercentage: 0.85, rawAbsolutos: mujRaw,
+            });
+        });
+
+        configuracionesGraficas['chartPiramide'] = {
+            type: 'bar',
+            plugins: [iconosPiramidePlugin],
+            data: { labels: rangosInvertidos, datasets: datasetsPiramide },
+            options: {
+                indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+                events: ['click'], // Solo se activa el tooltip al hacer clic
+                interaction: { mode: 'index', intersect: true }, // intersect: true para que solo se active sobre la barra exacta
+                grouped: false,
+                plugins: {
+                    legend: { position: 'top', labels: { boxWidth: 14, font: { size: 10 } } },
+                    tooltip: {
+                        callbacks: {
+                            label: function(ctx) {
+                                const absoluto = ctx.dataset.rawAbsolutos[ctx.dataIndex];
+                                return `${ctx.dataset.label}: ${absoluto} (${Math.abs(ctx.raw).toFixed(1)}%)`;
+                            }
+                        }
+                    },
+                    datalabels: { display: false }
+                },
+                scales: {
+                    x: { stacked: false, suggestedMin: -10, suggestedMax: 10, ticks: { callback: v => Math.abs(v).toFixed(0) + '%', font: { size: 10 } } },
+                    y: { stacked: false, ticks: { font: { size: 10 } }, title: { display: true, text: 'Rango de edad', font: { size: 10 } } }
+                },
+            },
+        };
+        graficaPiramide = new Chart(document.getElementById('chartPiramide'), configuracionesGraficas['chartPiramide']);
+    };
+
+    window.abrirModal = function(canvasId, tituloId) {
+        const modal = document.getElementById('chartModal');
+        const modalCanvas = document.getElementById('modalCanvas');
+
+        document.getElementById('modalTitle').innerText = document.getElementById(tituloId).innerText;
+        modal.classList.add('active');
+
+        if (graficaModal) graficaModal.destroy();
+
+        const configActual = configuracionesGraficas[canvasId];
+
+        if (configActual) {
+            const datasetsClonados = configActual.data.datasets.map(ds => ({
+                ...ds,
+                data: Array.isArray(ds.data) ? ds.data.map(v => (v && typeof v === 'object') ? { ...v } : v) : ds.data
+            }));
+
+            graficaModal = new Chart(modalCanvas, {
+                type: configActual.type,
+                data: {
+                    labels: [...configActual.data.labels],
+                    datasets: datasetsClonados
+                },
+                plugins: configActual.plugins || [],
+                options: {
+                    ...configActual.options,
+                    responsive: true,
+                    maintainAspectRatio: false,
+                }
+            });
+        }
+    };
+
+    window.cerrarModal = function() {
+        const modal = document.getElementById('chartModal');
+        modal.classList.remove('active');
+        if (graficaModal) {
+            graficaModal.destroy();
+            graficaModal = null;
+        }
+    };
+
+    document.getElementById('chartModal').addEventListener('click', function(e) {
+        if (e.target === this) window.cerrarModal();
+    });
+
+    window.addEventListener('DOMContentLoaded', window.cargarDatos);
+</script>
+</body>
+</html>
